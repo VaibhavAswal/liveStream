@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Live Trigger</title>
+</head>
+<body>
+    <h1>Trigger Go Live</h1>
+    <form id="goLiveForm">
+        <label for="channelName">Channel Name:</label><br>
+        <input type="text" id="channelName" name="channelName" placeholder="Enter channel name" required><br><br>
+        
+        <label for="title">Stream Title:</label><br>
+        <input type="text" id="title" name="title" placeholder="Enter stream title" required><br><br>
+
+        <button type="submit">Go Live Trigger</button>
+    </form>
+
+    <script>
+        document.getElementById('goLiveForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const channelName = document.getElementById('channelName').value;
+            const title = document.getElementById('title').value;
+
+            try {
+                const response = await fetch('http://localhost:3000/go-live-trigger', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ channelName, title }),
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    alert(`Success: ${result.message}`);
+                } else {
+                    alert(`Error: ${result.message}`);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Failed to trigger Go Live.');
+            }
+        });
+    </script>
+</body>
+</html>

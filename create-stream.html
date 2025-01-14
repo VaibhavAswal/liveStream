@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Stream</title>
+</head>
+<body>
+    <h1>Create a Live Stream</h1>
+    <form id="streamForm" method="POST">
+        <label for="title">Stream Title:</label><br>
+        <input type="text" id="title" name="title" placeholder="Enter stream title" required><br><br>
+        
+        <label for="teamA">Team A Name:</label><br>
+        <input type="text" id="teamA" name="teamA" required><br><br>
+
+        <label for="teamB">Team B Name:</label><br>
+        <input type="text" id="teamB" name="teamB" required><br><br>
+
+        <label for="scheduledStartTime">Scheduled Start Time:</label><br>
+        <input type="datetime-local" id="scheduledStartTime" name="scheduledStartTime"><br><br>
+    
+        <label for="scheduledStopTime">Scheduled Stop Time:</label><br>
+        <input type="datetime-local" id="scheduledStopTime" name="scheduledStopTime"><br><br>
+    
+        <button type="submit" id="createStream">Create Scheduled Stream</button>
+        <button type="submit" id="updateStream">Update Scheduled Stream</button>
+        <button type="submit" id="goLiveNow">Go Live Now</button>
+        <button type="submit" id="goLiveTrigger">GoLive button trigger</button>
+    </form>
+
+    <script>
+        const form = document.getElementById('streamForm');
+        const createStreamButton = document.getElementById('createStream');
+        const updateStreamButton = document.getElementById('updateStream');
+        const goLiveNowButton = document.getElementById('goLiveNow');
+        const goLiveTriggerButton = document.getElementById('goLiveTrigger');
+
+        // Ensure that the right action is selected based on the button clicked
+        createStreamButton.onclick = (event) => {
+            event.preventDefault();  // Prevent the form from submitting immediately
+            form.action = "http://localhost:3000/create-stream";
+            console.log('Form action set to create-stream');
+            submitForm();
+        };
+
+        updateStreamButton.onclick = (event) => {
+            event.preventDefault();  // Prevent the form from submitting immediately
+            form.action = "http://localhost:3000/update-stream";  // Action for updating an existing stream
+            console.log('Form action set to update-stream');
+            submitForm();
+        };
+
+        goLiveNowButton.onclick = (event) => {
+            event.preventDefault();  // Prevent the form from submitting immediately
+            form.action = "http://localhost:3000/go-live-now";
+            console.log('Form action set to go-live-now');
+            submitForm();
+        };
+
+        goLiveTriggerButton.onclick = (event) => {
+            event.preventDefault();  // Prevent the form from submitting immediately
+            form.action = "http://localhost:3000/go-live-trigger";  // Action for triggering live stream
+            console.log('Form action set to go-live-trigger');
+            submitForm();
+        };
+
+        // Function to handle form submission
+        function submitForm() {
+            const teamA = document.getElementById('teamA').value;
+            const teamB = document.getElementById('teamB').value;
+            const title = document.getElementById('title').value;
+            const scheduledStartTime = document.getElementById('scheduledStartTime').value;
+            const scheduledStopTime = document.getElementById('scheduledStopTime').value;
+
+            // Check if teamA and teamB are not empty
+            if (!teamA || !teamB) {
+                alert('Please provide both Team A and Team B names.');
+                return;
+            }
+            if (!scheduledStartTime) {
+                alert('Scheduled start time is required.');
+                return;
+            }
+
+            // Log the form data
+            console.log({
+                title,
+                teamA,
+                teamB,
+                scheduledStartTime,
+                scheduledStopTime
+            });
+
+            // Submit the form
+            form.submit();
+        }
+    </script>
+</body>
+</html>
