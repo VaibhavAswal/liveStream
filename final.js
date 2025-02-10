@@ -355,8 +355,8 @@ async function createBroadcastAndBind(
       },
       contentDetails: {
         monitorStream: { enableMonitorStream: true },
-        enableAutoStart: true,
-        enableAutoStop: true,
+        enableAutoStart: false,
+        enableAutoStop: false,
         enableDvr: true,
         recordFromStart: true,
         enableContentEncryption: false,
@@ -394,6 +394,7 @@ app.post("/go-live-now", async (req, res) => {
       });
     }
 
+    console.log("Starting stream:", title);
     const academyOAuth2Client = getOAuthClient();
     academyOAuth2Client.setCredentials(academy.youtubeTokens);
     const academyResult = await createBroadcastAndBind(
@@ -431,6 +432,10 @@ app.post("/go-live-now", async (req, res) => {
 
 app.post("/end-stream", async (req, res) => {
   const { academyId, title } = req.body;
+  function compareStrings(str1, str2) {
+    const normalize = (str) => str.trim().replace(/\s+/g, " ");
+    return normalize(str1) === normalize(str2);
+  }
 
   try {
     const academy = await Academy.findOne({ academyId });
@@ -452,12 +457,11 @@ app.post("/end-stream", async (req, res) => {
         broadcastType: "all",
       });
 
-      const broadcast = searchResponse.data.items.find(
-        (b) =>
-          b.snippet.title ===
-          (isCompanyChannel ? `${academy.name} - ${title}` : title)
+      const broadcast = searchResponse.data.items.find((b) =>
+        compareStrings(b.snippet.title, title)
       );
 
+      console.log("Ending broadcast:", title);
       if (broadcast) {
         await youtube.liveBroadcasts.transition({
           auth,
@@ -467,6 +471,7 @@ app.post("/end-stream", async (req, res) => {
         });
         return true;
       }
+      console.log("Broadcast not found");
       return false;
     };
 
@@ -482,6 +487,205 @@ app.post("/end-stream", async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/check-stream-status", async (req, res) => {
+  const { academyId, broadcastId, isCompanyChannel } = req.query;
+
+  try {
+    const academy = await Academy.findOne({ academyId });
+    if (!academy) {
+      return res.status(404).json({ error: "Academy not found" });
+    }
+
+    const oauth2Client =
+      isCompanyChannel === "true"
+        ? await getCompanyOAuthClient()
+        : (() => {
+            const client = getOAuthClient();
+            client.setCredentials(academy.youtubeTokens);
+            return client;
+          })();
+
+    const youtube = google.youtube("v3");
+
+    const broadcastResponse = await youtube.liveBroadcasts.list({
+      auth: oauth2Client,
+      part: "status,snippet,contentDetails",
+      id: broadcastId,
+    });
+
+    if (!broadcastResponse.data.items.length) {
+      return res.status(404).json({ error: "Broadcast not found" });
+    }
+
+    const broadcast = broadcastResponse.data.items[0];
+    const streamResponse = await youtube.liveStreams.list({
+      auth: oauth2Client,
+      part: "status,snippet,cdn",
+      id: broadcast.contentDetails.boundStreamId,
+    });
+
+    if (!streamResponse.data.items.length) {
+      return res.status(404).json({ error: "Stream not found" });
+    }
+
+    const stream = streamResponse.data.items[0];
+
+    return res.json({
+      broadcastStatus: broadcast.status.lifeCycleStatus,
+      streamStatus: stream.status.streamStatus,
+      healthStatus: stream.status.healthStatus,
+      isReadyToStart:
+        stream.status.streamStatus === "active" &&
+        (broadcast.status.lifeCycleStatus === "testing" ||
+          broadcast.status.lifeCycleStatus === "ready"),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/start-stream", async (req, res) => {
+  const { academyId, broadcastId, isCompanyChannel } = req.body;
+  const MAX_RETRIES = 3;
+  const DELAY_BETWEEN_RETRIES = 5000; // 5 seconds
+
+  try {
+    const academy = await Academy.findOne({ academyId });
+    if (!academy) {
+      return res.status(404).json({ error: "Academy not found" });
+    }
+
+    const oauth2Client = isCompanyChannel
+      ? await getCompanyOAuthClient()
+      : (() => {
+          const client = getOAuthClient();
+          client.setCredentials(academy.youtubeTokens);
+          return client;
+        })();
+
+    const youtube = google.youtube("v3");
+
+    // Function to check stream health
+    const checkStreamHealth = async () => {
+      const streamResponse = await youtube.liveBroadcasts.list({
+        auth: oauth2Client,
+        part: "status,contentDetails",
+        id: broadcastId,
+      });
+
+      if (!streamResponse.data.items.length) {
+        throw new Error("Broadcast not found");
+      }
+
+      const broadcast = streamResponse.data.items[0];
+
+      // Get stream details
+      const streamDetailsResponse = await youtube.liveStreams.list({
+        auth: oauth2Client,
+        part: "status",
+        id: broadcast.contentDetails.boundStreamId,
+      });
+
+      if (!streamDetailsResponse.data.items.length) {
+        throw new Error("Stream not found");
+      }
+
+      const stream = streamDetailsResponse.data.items[0];
+
+      return {
+        broadcastStatus: broadcast.status.lifeCycleStatus,
+        streamStatus: stream.status.streamStatus,
+        healthStatus: stream.status.healthStatus?.status || null,
+      };
+    };
+
+    // Function to attempt transition to live
+    const attemptTransition = async (retryCount = 0) => {
+      const health = await checkStreamHealth();
+
+      if (health.broadcastStatus === "live") {
+        return {
+          success: true,
+          message: "Broadcast is already live",
+          status: health.broadcastStatus,
+        };
+      }
+
+      if (health.streamStatus !== "active") {
+        throw new Error(
+          `Stream is not active. Current status: ${health.streamStatus}`
+        );
+      }
+
+      if (health.healthStatus !== "good") {
+        throw new Error(
+          `Stream health is not good. Current health: ${health.healthStatus}`
+        );
+      }
+
+      try {
+        // Ensure we're in testing state first
+        if (health.broadcastStatus !== "testing") {
+          await youtube.liveBroadcasts.transition({
+            auth: oauth2Client,
+            broadcastStatus: "testing",
+            id: broadcastId,
+            part: "id,status",
+          });
+
+          // Wait for testing state to stabilize
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+
+        // Now try to go live
+        const result = await youtube.liveBroadcasts.transition({
+          auth: oauth2Client,
+          broadcastStatus: "live",
+          id: broadcastId,
+          part: "id,status",
+        });
+
+        return {
+          success: true,
+          message: "Stream started successfully",
+          status: result.data.status.lifeCycleStatus,
+        };
+      } catch (error) {
+        if (retryCount < MAX_RETRIES) {
+          // Wait before retrying
+          await new Promise((resolve) =>
+            setTimeout(resolve, DELAY_BETWEEN_RETRIES)
+          );
+          return attemptTransition(retryCount + 1);
+        }
+        throw error;
+      }
+    };
+
+    // Start the transition process
+    const result = await attemptTransition();
+    res.json(result);
+  } catch (error) {
+    // Get final status for error reporting
+    try {
+      const finalHealth = await checkStreamHealth();
+      res.status(400).json({
+        error: "Failed to transition to live state",
+        details: error.message,
+        currentStatus: finalHealth.broadcastStatus,
+        streamStatus: finalHealth.streamStatus,
+        healthStatus: finalHealth.healthStatus,
+      });
+    } catch (statusError) {
+      res.status(500).json({
+        error: "Failed to transition to live state",
+        details: error.message,
+        additionalError: "Could not fetch final status",
+      });
+    }
   }
 });
 
